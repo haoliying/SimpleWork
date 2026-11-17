@@ -1,0 +1,70 @@
+{
+  "name": "simplework-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SimpleWork Desktop - 本地优先的轻量 Agent 工作台",
+  "author": "SimpleWork",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "payload": "node scripts/build-desktop.mjs --payload-only",
+    "icon": "node scripts/make-icon.mjs",
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "undici": "^8.12.2"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.simplework.desktop",
+    "productName": "SimpleWork",
+    "copyright": "Copyright © 2026 SimpleWork",
+    "directories": {
+      "output": "../release",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "README-DESKTOP.md",
+      "build/icon.png",
+      "payload/**/*",
+      "!payload/**/*.map",
+      "package.json"
+    ],
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableEmbeddedAsarIntegrityValidation": false,
+      "onlyLoadAppFromAsar": false,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "asarUnpack": [],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "SimpleWork-${version}-win-x64.exe",
+      "legalTrademarks": "SimpleWork"
+    },
+    "portable": {
+      "artifactName": "SimpleWork-${version}-win-x64.exe",
+      "requestExecutionLevel": "user",
+      "unpackDirName": "SimpleWork"
+    },
+    "compression": "normal"
+  }
+}
