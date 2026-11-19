@@ -7,9 +7,9 @@ import type { ProviderDef } from '../core/config.js';
 import { createProviderFromDef } from '../core/llm/index.js';
 import { SkillRegistry } from '../core/skills/loader.js';
 import { installSkill, removeSkill, searchRemote } from '../core/skills/installer.js';
-import { ConversationStore, autoTitle } from '../core/conversations.js';
+import { ConversationStore, autoTitle, refsToContext } from '../core/conversations.js';
 import { sanitizeHistory } from '../core/history.js';
-import type { Conversation, ConvToolCall } from '../core/conversations.js';
+import type { Conversation, ConvToolCall, ConvRef } from '../core/conversations.js';
 import { INSTALL_DIR, ensureDir, globalDir } from '../core/paths.js';
 import { writeEnvVar } from '../core/env.js';
 import type { Agent } from '../core/agent.js';
@@ -224,11 +224,12 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
 
       if (req.method === 'POST' && route === '/api/chat') {
         const raw = await readBody(req);
-        const { message, provider, model, conversationId } = JSON.parse(raw || '{}') as {
+        const { message, provider, model, conversationId, refs: refRequests } = JSON.parse(raw || '{}') as {
           message?: string;
           provider?: string;
           model?: string;
           conversationId?: string;
+          refs?: Array<{ conversationId: string; kind: string; index?: number; toolIndex?: number }>;
         };
         if (!message) return json(res, { error: '缺少 message' }, 400);
 
@@ -249,8 +250,15 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
           conv.provider = provider;
           conv.model = model ?? undefined;
         }
+        // 跨对话引用：服务端二次解析（只认 ID + 位置，内容从磁盘重读）
+        const refs: ConvRef[] = Array.isArray(refRequests)
+          ? convStore.resolveRefs(refRequests)
+          : [];
+        const contextBlock = refsToContext(refs);
+        const prompt = contextBlock ? `${message}\n\n${contextBlock}` : message;
+
         if (conv.messages.length === 0) conv.title = autoTitle(message);
-        conv.messages.push({ role: 'user', text: message, ts: Date.now() });
+        conv.messages.push({ role: 'user', text: message, ts: Date.now(), refs: refs.length ? refs : undefined });
         convStore.save(conv); // 先落盘：即使中途崩溃也不丢用户输入
 
         res.writeHead(200, {
@@ -260,6 +268,7 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
           'X-Accel-Buffering': 'no',
         });
         send(res, { type: 'conversation', id: conv.id, title: conv.title });
+        if (refs.length) send(res, { type: 'refs', refs });
 
         // 前端关掉页面 / 点停止 → 中止本轮，并把已有内容存下来
         const ac = new AbortController();
@@ -277,7 +286,7 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
         let lastError = '';
 
         try {
-          finalText = await agent.run(message, {
+          finalText = await agent.run(prompt, {
             signal: ac.signal,
             onText: (delta) => send(res, { type: 'text', delta }),
             onReasoning: (delta) => send(res, { type: 'reasoning', delta }),
