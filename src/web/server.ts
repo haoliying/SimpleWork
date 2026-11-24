@@ -54,6 +54,10 @@ function json(res: http.ServerResponse, data: unknown, status = 200): void {
   res.end(body);
 }
 
+/** /v1/models 会混入 embedding / 语音 / 绘图等非聊天模型，拉取时过滤掉 */
+const NON_CHAT_MODEL_RE =
+  /embedding|rerank|re-rank|bge|jina|gme|clip|tts|text-to-speech|speech|audio|whisper|asr|image|flux|kolors|stable-diffusion|sd3|video|wqy|ocr/i;
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -458,6 +462,42 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
           const r = store.removeProvider(id);
           log(`模型供应商已删除：${id}`);
           return json(res, { ok: true, hidden: r.hidden, file: r.file });
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 400);
+        }
+      }
+
+      // 为已保存的厂商（含出厂预置）拉取在线模型列表并合并写回本地配置
+      if (req.method === 'POST' && route === '/api/providers/fetch-models') {
+        const { id } = JSON.parse((await readBody(req)) || '{}') as { id?: string };
+        if (!id) return json(res, { error: '缺少 id' }, 400);
+        try {
+          const def = store.provider(id);
+          const { provider, missingKeyEnv } = createProviderFromDef(def);
+          const all = await provider.listModels();
+          const chat = all.filter((m) => !NON_CHAT_MODEL_RE.test(m.toLowerCase()));
+          if (!chat.length) {
+            return json(res, { error: '服务返回了模型，但都被识别为非聊天模型；请检查 /v1/models 返回内容' }, 400);
+          }
+          const cfg = JSON.parse(JSON.stringify(store.models)) as typeof store.models;
+          const target = cfg.providers.find((p) => p.id === id);
+          if (!target) return json(res, { error: `未找到供应商 ${id}` }, 404);
+          const existing = new Set(target.models.map((m) => m.id));
+          const added = chat
+            .filter((m) => !existing.has(m))
+            .map((m) => ({ id: m, label: m, tools: true }));
+          target.models = [...target.models, ...added];
+          if (!target.defaultModel) target.defaultModel = chat[0]!;
+          store.saveModels(cfg);
+          log(`${def.name} 拉取模型：返回 ${all.length} 个，聊天模型 ${chat.length} 个，新增 ${added.length} 个`);
+          return json(res, {
+            ok: true,
+            total: all.length,
+            chatCount: chat.length,
+            added: added.length,
+            models: target.models.map((m) => ({ id: m.id, label: m.label, context: m.context, tools: m.tools })),
+            missingKeyEnv,
+          });
         } catch (e) {
           return json(res, { error: (e as Error).message }, 400);
         }

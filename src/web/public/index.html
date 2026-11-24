@@ -967,10 +967,26 @@ function renderModels(){
     const more = (p.models||[]).length>6 ? ' 等 '+p.models.length+' 个' : '';
     el.innerHTML = '<div class="t"><span class="dot '+(p.hasKey?'ok':'err')+'"></span>'+esc(p.name)+
       (p.custom?' <span class="tag">自定义</span>':'')+
-      '<span class="acts">'+(p.custom?'<button data-a="edit">编辑</button><button data-a="del">删除</button>':'')+'</span></div>'+
+      '<span class="acts"><button data-a="fetch" title="从 /v1/models 拉取该服务实际提供的模型">拉取模型</button>'+
+      (p.custom?'<button data-a="edit">编辑</button><button data-a="del">删除</button>':'')+'</span></div>'+
       '<div class="d">'+esc(p.id)+' · '+esc(p.protocol)+' · '+(p.hasKey?'已配置 Key':'未配置 ' + esc(p.apiKeyEnv||'Key'))+'</div>'+
       '<div class="d">'+esc(models)+esc(more)+'</div>'+
-      '<div class="d" style="font-family:var(--mono);font-size:11px">'+esc(p.baseURL)+'</div>';
+      '<div class="d" style="font-family:var(--mono);font-size:11px">'+esc(p.baseURL)+'</div>'+
+      '<div class="d" data-role="fetch-status" style="display:none;font-size:11.5px"></div>';
+    const fetchBtn=el.querySelector('[data-a=fetch]');
+    fetchBtn.onclick = async (e)=>{
+      e.stopPropagation();
+      const old=fetchBtn.textContent; fetchBtn.textContent='拉取中…'; fetchBtn.disabled=true;
+      const st=el.querySelector('[data-role=fetch-status]'); st.style.display=''; st.style.color='var(--muted)'; st.textContent='正在从接口读取模型列表…';
+      try{
+        const r=await (await fetch('/api/providers/fetch-models',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id:p.id})})).json();
+        if(r.error){ st.textContent='✗ '+r.error; st.style.color='var(--err)'; return; }
+        st.textContent='✓ 接口返回 '+r.total+' 个，聊天模型 '+r.chatCount+' 个，新增 '+r.added+' 个'; st.style.color='var(--ok)';
+        await loadState();
+      }catch(err){ st.textContent='✗ 请求失败：'+(err.message||err); st.style.color='var(--err)'; }
+      finally{ fetchBtn.textContent=old; fetchBtn.disabled=false; }
+    };
     if(p.custom){
       el.querySelector('[data-a=edit]').onclick = (e)=>{ e.stopPropagation(); openProviderForm(p); };
       el.querySelector('[data-a=del]').onclick = async (e)=>{
@@ -987,7 +1003,7 @@ function renderModels(){
   const tip = document.createElement('div');
   tip.className='d';
   tip.style.cssText='font-size:12px;color:var(--muted);margin-top:6px;line-height:1.7';
-  tip.innerHTML = '点任意厂商即切换；没配 Key 的厂商会在发送时报错。<br>自建/代理/本地服务点上方「添加自定义模型」，填 Key 也可到「设置」标签页。';
+  tip.innerHTML = '点任意厂商即切换；没配 Key 的厂商会在发送时报错。<br>出厂厂商只预置了几个常用模型，点卡片上的「拉取模型」可从服务端 /v1/models 拉全量列表并写回本地配置。<br>自建/代理/本地服务点上方「添加自定义模型」，填 Key 也可到「设置」标签页。';
   pane.appendChild(tip);
 }
 

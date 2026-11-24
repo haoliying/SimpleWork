@@ -137,6 +137,10 @@ sw models test deepseek        # 发一条最小请求验证连通性
 
 模型 ID 会随厂商更新而变，`sw models fetch <provider>` 可以随时把真实列表拉回来写进本地配置——这就是为什么预置清单里的模型名只是"建议值"而不是硬编码。
 
+> **为什么填了 Key 后下拉里还是只有几个模型？**
+> 顶栏模型下拉显示的是**本地 `models.json` 里写好的模型**，不是实时调用厂商接口查出来的。出厂清单为每家只放了几个常用模型（硅基流动默认 3 个），填 Key 只会点亮「已配置 Key」，不会自动扩充列表。
+> 拉全量列表有两种方式：命令行 `sw models fetch siliconflow`，或界面左侧「◈ 模型」面板里点该厂商卡片上的 **「拉取模型」** 按钮（会请求 `/v1/models`，自动过滤 embedding/语音/绘图等非聊天模型后写回本地配置）。Key 保存在 `<配置目录>/.env` 的 `SILICONFLOW_API_KEY`（便携版为 exe 同级 `.env`）。
+
 ### 3.1 自定义模型（任意 OpenAI 兼容 / Anthropic / Ollama 服务）
 
 除了预置厂商，你可以添加**任意**模型服务：公司内网网关、OpenAI 兼容中转站、OneAPI / NewAPI、  
