@@ -13,12 +13,19 @@ export interface ResolvedLLM {
   missingKeyEnv?: string;
 }
 
-/** 直接用一个供应商定义构造 LLM（用于「测试连接」这种还没落盘的场景） */
-export function createProviderFromDef(def: ProviderDef, modelId?: string): ResolvedLLM {
+/**
+ * 直接用一个供应商定义构造 LLM（用于「测试连接」这种还没落盘的场景）。
+ * `allowNoModel` 供「拉取模型列表」使用：列模型只需要端点与密钥，不需要先配置模型。
+ */
+export function createProviderFromDef(
+  def: ProviderDef,
+  modelId?: string,
+  opts: { allowNoModel?: boolean } = {},
+): ResolvedLLM {
   const apiKey = resolveApiKeyOf(def);
   const model =
-    modelId || def.defaultModel || def.models[0]?.id;
-  if (!model) throw new Error(`供应商 ${def.id} 没有可用模型`);
+    modelId || def.defaultModel || def.models[0]?.id || '';
+  if (!model && !opts.allowNoModel) throw new Error(`供应商 ${def.id} 没有可用模型，请先拉取模型或添加自定义模型`);
 
   let provider: LLMProvider;
   if (def.protocol === 'anthropic') {

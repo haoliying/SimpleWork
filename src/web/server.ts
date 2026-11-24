@@ -268,6 +268,13 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
           refs?: Array<{ conversationId: string; kind: string; index?: number; toolIndex?: number }>;
         };
         if (!message) return json(res, { error: '缺少 message' }, 400);
+        if (provider && !model) {
+          return json(
+            res,
+            { error: '当前供应商还没有真实模型，请先在「模型」面板点「拉取模型」，或添加自定义模型' },
+            400,
+          );
+        }
 
         // 定位会话：显式指定 > 当前 > 新建
         let conv: Conversation | null = conversationId
@@ -473,7 +480,8 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
         if (!id) return json(res, { error: '缺少 id' }, 400);
         try {
           const def = store.provider(id);
-          const { provider, missingKeyEnv } = createProviderFromDef(def);
+          // 拉取列表只依赖端点与密钥，不需要该厂商已配置模型
+          const { provider, missingKeyEnv } = createProviderFromDef(def, undefined, { allowNoModel: true });
           const all = await provider.listModels();
           const chat = all.filter((m) => !NON_CHAT_MODEL_RE.test(m.toLowerCase()));
           if (!chat.length) {
@@ -521,7 +529,12 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
           }
           // 未保存的明文 Key 只在本次请求里生效
           if (body.apiKey) def = { ...def, apiKey: String(body.apiKey).trim() };
-          const { provider, model, missingKeyEnv } = createProviderFromDef(def, body.model);
+          if (body.mode !== 'models' && !body.model && !def.defaultModel && !def.models.length) {
+            return json(res, { error: '该供应商还没有可用模型，请先拉取模型列表或填写一个模型 ID' }, 400);
+          }
+          const { provider, model, missingKeyEnv } = createProviderFromDef(def, body.model, {
+            allowNoModel: body.mode === 'models',
+          });
           if (body.mode === 'models') {
             const models = await provider.listModels();
             return json(res, { ok: true, models });

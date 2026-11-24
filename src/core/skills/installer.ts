@@ -14,7 +14,7 @@ export interface InstallTarget {
   sourceId?: string;
 }
 
-/** 解析安装目标：featured 名称 或 owner/repo[/子路径...] */
+/** 解析安装目标：owner/repo[/子路径...]（featured 别名仅当用户自己在配置里登记时才可用） */
 export function resolveTarget(store: ConfigStore, spec: string): InstallTarget {
   const trim = spec.trim().replace(/^\/+|\/+$/g, '');
   const featured = store.skills.featured.find(
@@ -36,7 +36,7 @@ export function resolveTarget(store: ConfigStore, spec: string): InstallTarget {
   const parts = trim.split('/').filter(Boolean);
   if (parts.length < 2) {
     throw new Error(
-      `无法解析「${spec}」。请使用 featured 里的名称（sw skills search 查看），或完整路径 owner/repo/子目录`,
+      `无法解析「${spec}」。请使用完整真实路径 owner/repo/子目录（可先 sw skills search <关键词> 查看）`,
     );
   }
   const repo = `${parts[0]}/${parts[1]}`;
@@ -228,7 +228,7 @@ export interface SearchOutcome {
 
 /**
  * 检索 Skill：
- * 1) 离线：直接匹配本地预置的 featured 清单（不联网，永远可用）
+ * 1) 用户自定义的 featured 别名（出厂清单已清空；仅在用户自己登记时才命中）
  * 2) 在线：列出各源仓库里的目录（配置了 GITHUB_TOKEN 时限额更高）
  */
 export async function searchRemote(
@@ -252,7 +252,7 @@ export async function searchRemote(
     results.push(h);
   };
 
-  // 1) 离线：featured 清单
+  // 1) 用户自己登记的 featured 别名（出厂不再预置）
   for (const f of store.skills.featured) {
     const src = store.skills.sources.find((s) => s.id === f.source);
     const hay = `${f.name} ${f.desc ?? ''} ${(f.tags ?? []).join(' ')} ${src?.name ?? ''}`.toLowerCase();
@@ -287,8 +287,8 @@ export async function searchRemote(
         if (!res.ok) {
           onlineError =
             res.status === 403
-              ? 'GitHub API 限流（可设置 GITHUB_TOKEN 提高限额）；已展示本地精选清单'
-              : `GitHub API 返回 ${res.status}；已展示本地精选清单`;
+              ? 'GitHub API 限流（可设置 GITHUB_TOKEN 提高限额）；请稍后重试'
+              : `GitHub API 返回 ${res.status}；请稍后重试`;
           return;
         }
         const json = (await res.json()) as { name: string; type: string }[];

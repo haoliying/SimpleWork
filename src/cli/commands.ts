@@ -8,7 +8,7 @@ import { ConfigStore, normalizeProviderDef, suggestProviderId } from '../core/co
 import type { Protocol } from '../core/config.js';
 import { SkillRegistry } from '../core/skills/loader.js';
 import { installSkill, removeSkill, searchRemote } from '../core/skills/installer.js';
-import { createProvider } from '../core/llm/index.js';
+import { createProvider, createProviderFromDef } from '../core/llm/index.js';
 import { McpManager } from '../core/mcp/manager.js';
 import { BUILTIN_CONFIG_DIR, globalDir, projectDir, skillInstallDir } from '../core/paths.js';
 import { writeEnvVar } from '../core/env.js';
@@ -135,14 +135,14 @@ ${C.bold}MCP${C.reset}
 ${C.bold}Skills${C.reset}
   sw skills list             已安装的 Skill
   sw skills search <关键词>    在线检索公开仓库里的免费 Skill
-  sw skills install <名称>     安装（featured 名称或 owner/repo/子路径）
+  sw skills install <路径>     安装真实路径 owner/repo/子目录
   sw skills remove <名称>      卸载
   sw skills create <名称>      在本机生成一个 Skill 模板
 
 ${C.bold}示例${C.reset}
   cp .env.example ~/.simplework/.env && 填写 DEEPSEEK_API_KEY
-  sw models use deepseek && sw doctor
-  sw skills install pdf && sw ask "帮我提取 ./a.pdf 的目录"
+  sw models fetch deepseek && sw models use deepseek && sw doctor
+  sw skills search pdf && sw skills install anthropics/skills/skills/pdf
   sw mcp enable github && sw ask "看看这个仓库最近的 issue"
 `;
 
@@ -257,7 +257,7 @@ async function cmdModels(args: string[], store: ConfigStore): Promise<void> {
       );
       console.log(`    ${C.gray}密钥：${p.apiKeyEnv ? '${' + p.apiKeyEnv + '}' : '(无)'}   baseURL：${p.baseURL}${C.reset}`);
       const models = p.models.map((m) => (store.models.active.provider === p.id && store.models.active.model === m.id ? `*${m.id}` : m.id));
-      console.log(`    ${C.gray}模型：${models.join(', ')}${C.reset}`);
+      console.log(`    ${C.gray}模型：${models.length ? models.join(', ') : '尚未拉取；执行 sw models fetch ' + p.id + ' 获取真实列表'}${C.reset}`);
     }
     return;
   }
@@ -272,7 +272,9 @@ async function cmdModels(args: string[], store: ConfigStore): Promise<void> {
   if (sub === 'fetch') {
     const pid = rest[0];
     if (!pid) return err('用法：sw models fetch <provider>');
-    const { provider } = createProvider(store, pid);
+    const def = store.provider(pid);
+    // 拉取列表不要求该厂商已配置模型（出厂清单现在不带任何模型 ID）
+    const { provider } = createProviderFromDef(def, undefined, { allowNoModel: true });
     info(`正在拉取 ${pid} 的模型列表...`);
     const models = await provider.listModels();
     if (!models.length) return err(`没有拉到模型（可能是 Key 无效或该服务不支持 /models）`);
@@ -454,7 +456,7 @@ async function cmdSkills(args: string[], store: ConfigStore): Promise<void> {
     const all = registry.list();
     title(`已安装 Skill（${all.length}）  ${C.dim}安装位置：${skillInstallDir(process.cwd())}${C.reset}`);
     if (!all.length) {
-      console.log(`  还没有安装。试试：${C.cyan}sw skills search pdf${C.reset} 或 ${C.cyan}sw skills install pdf${C.reset}`);
+      console.log(`  还没有安装。试试：${C.cyan}sw skills search pdf${C.reset} 找到真实路径后 ${C.cyan}sw skills install owner/repo/子路径${C.reset}`);
       return;
     }
     for (const s of all) {
@@ -475,7 +477,7 @@ async function cmdSkills(args: string[], store: ConfigStore): Promise<void> {
       const mark = h.installed ? `${C.green}✓已装${C.reset}` : `${C.gray}  未装${C.reset}`;
       console.log(`${mark} ${C.bold}${h.name}${C.reset} ${C.gray}(${h.source})${C.reset}${h.featured ? ' ' + C.cyan + '精选' + C.reset : ''}`);
       if (h.desc) console.log(`   ${C.gray}${h.desc}${C.reset}`);
-      console.log(`   ${C.gray}sw skills install ${h.name}${C.reset}`);
+      console.log(`   ${C.gray}sw skills install ${h.repo}/${h.subPath}${C.reset}`);
     }
     return;
   }

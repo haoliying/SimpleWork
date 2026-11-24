@@ -1,10 +1,10 @@
 # SimpleWork
 
-本地优先的轻量 Agent 工作台。参照 WorkBuddy 的模式（Agent 循环 + 内置工具 + MCP + Skill），但**所有远程能力都由本地配置文件驱动**：模型、MCP 服务器、Skill 全部预置好，你只需要填 Key / 开关开关。
+本地优先的轻量 Agent 工作台。参照 WorkBuddy 的模式（Agent 循环 + 内置工具 + MCP + Skill），但**所有远程能力都由本地配置文件驱动**：端点、MCP 服务器、Skill 来源都由你控制，不使用模拟数据。
 
-- 预置 **15 家大模型厂商**（国产 + 国际 + 本地），填一个 API Key 即可用；还支持**添加任意自定义模型**（见 §3.1）
+- 预置 **15 家大模型厂商的真实连接端点**（国产 + 国际 + 本地），**不内置任何假模型 ID**：填 Key 后从服务端 `/v1/models` 拉取真实模型，或手工添加（见 §3）
 - 预置 **15 个公开 MCP 服务器**（官方实现 + 社区常用），`sw mcp enable <id>` 即用
-- 预置 **3 个免费 Skill 源 / 33 个精选条目**，`sw skills install <name>` 一键下载到本地
+- 预置 **3 个真实公开 Skill 仓库源**，在线检索后从仓库安装；不内置演示 Skill，也没有离线精选别名
 - 一个 `sw` 命令行 + 一个本地 Web 界面（`http://127.0.0.1:8787`），不依赖任何云端服务
 - **桌面版**：Electron 原生窗口（`sw` 同款引擎），可打包成单个免安装 exe（见下文 §11）
 
@@ -86,9 +86,9 @@ Ollama 在**另一台机器**（局域网）上时，把 `~/.simplework/models.j
 ```
 ~/.simplework/
 ├── config.json     主配置：Agent 参数、工具开关、Web 端口、搜索后端
-├── models.json     预置大模型清单（厂商 / baseURL / 协议 / 模型 / Key 变量名）
-├── mcp.json        预置 MCP 服务器清单（stdio / http，启用开关）
-├── skills.json     Skill 源与精选清单
+├── models.json     厂商端点清单 + 你拉取/添加的真实模型（出厂不含模型 ID）
+├── mcp.json        MCP 服务器清单（stdio / http，启用开关）
+├── skills.json     真实 Skill 仓库源 + 用户自定义别名（出厂精选为空）
 ├── .env            你的密钥（不会被提交）
 └── skills/         已安装的 Skill
 ```
@@ -107,7 +107,7 @@ sw config set web.port 9000
 
 ---
 
-## 3. 预置大模型（填 Key 即用）
+## 3. 大模型端点（填 Key → 拉取真实模型）
 
 | id             | 厂商                            | 协议                         | 环境变量                  |
 | -------------- | ----------------------------- | -------------------------- | --------------------- |
@@ -129,17 +129,17 @@ sw config set web.port 9000
 
 ```bash
 sw models list                 # 看哪些已配 Key、当前用的是哪个
-sw models use qwen             # 切换厂商
+sw models fetch zhipu          # 从服务端拉取该厂商真实模型列表，回写本地配置
+sw models use zhipu            # 切换厂商（须先拉取或添加模型）
 sw models use openai:gpt-4o    # 厂商:模型 一起指定
-sw models fetch zhipu          # 在线拉取该厂商真实模型列表，回写本地配置
-sw models test deepseek        # 发一条最小请求验证连通性
+sw models test zhipu           # 发一条最小请求验证连通性
 ```
 
-模型 ID 会随厂商更新而变，`sw models fetch <provider>` 可以随时把真实列表拉回来写进本地配置——这就是为什么预置清单里的模型名只是"建议值"而不是硬编码。
+**程序里不预置任何假模型 ID。** 顶栏下拉里出现的每一个模型，都来自你实际账号的接口返回，或你自己录入的真实 ID。首次运行时下拉会显示「暂无模型，请先在 ◈ 模型 里拉取」。
 
-> **为什么填了 Key 后下拉里还是只有几个模型？**
-> 顶栏模型下拉显示的是**本地 `models.json` 里写好的模型**，不是实时调用厂商接口查出来的。出厂清单为每家只放了几个常用模型（硅基流动默认 3 个），填 Key 只会点亮「已配置 Key」，不会自动扩充列表。
-> 拉全量列表有两种方式：命令行 `sw models fetch siliconflow`，或界面左侧「◈ 模型」面板里点该厂商卡片上的 **「拉取模型」** 按钮（会请求 `/v1/models`，自动过滤 embedding/语音/绘图等非聊天模型后写回本地配置）。Key 保存在 `<配置目录>/.env` 的 `SILICONFLOW_API_KEY`（便携版为 exe 同级 `.env`）。
+- 命令行：`sw models fetch <provider>` 拉全量列表并写回配置。
+- 界面：左侧「◈ 模型」→ 对应厂商卡片 → **「拉取模型」**，请求 `/v1/models`，自动过滤 embedding / 语音 / 绘图等非聊天模型。
+- Key 保存在 `<配置目录>/.env`（便携版为 exe 同级 `.env`）；便携版不会读 `~/.simplework/.env`。
 
 ### 3.1 自定义模型（任意 OpenAI 兼容 / Anthropic / Ollama 服务）
 
@@ -211,15 +211,15 @@ sw mcp add my-tool npx -y some-mcp-package     # 手动加一个自己的
 | `alirezarezvani` | [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | 见仓库 LICENSE                                              |
 
 ```bash
-sw skills search pdf         # 检索（先搜本地精选清单，再联网列仓库目录）
-sw skills install pdf        # 安装精选条目
+sw skills search pdf         # 在线检索公开仓库，列出真实路径
+sw skills install anthropics/skills/skills/pdf                      # 按真实路径安装
 sw skills install obra/superpowers/skills/test-driven-development   # 装任意仓库子目录
 sw skills list               # 已安装
 sw skills remove pdf
 sw skills create my-skill    # 生成一个 SKILL.md 模板自己写
 ```
 
-出厂自带 3 个中文 Skill：`code-review`、`git-commit`、`summarize`。
+**不预置任何演示 Skill，也没有离线精选别名**：检索结果和安装路径都指向真实仓库目录；界面「安装」按钮用的也是同一个真实路径。
 
 **Skill 是渐进加载的**：系统提示里只放 `名称 + 一句话描述`（成本极低），模型判断相关时才用 `use_skill` 工具把完整 SKILL.md 拉进上下文——和 WorkBuddy 的机制一致。
 
@@ -425,9 +425,9 @@ npm --prefix desktop run dist      # 打包：release/SimpleWork-<版本>-win-x6
 
 SimpleWork-0.1.0-win-x64.exe     ← 程序  
 config.json                      ← 主配置（Agent 参数、工具开关）  
-models.json                      ← 预置大模型（含你改过的 Ollama 地址/模型）  
+models.json                      ← 厂商端点 + 你拉取/添加的真实模型  
 mcp.json                         ← MCP 服务器清单与开关  
-skills.json                      ← Skill 源与精选清单  
+skills.json                      ← Skill 真实仓库源（精选留给你自己登记）  
 .env                             ← API Key（只在本机）  
 skills/                          ← 下载的 Skill  
 conversations/                   ← 历史对话与上下文  
