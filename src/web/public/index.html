@@ -221,6 +221,15 @@ mark.hit.cur{background:#ffd23f;box-shadow:0 0 0 2px rgba(255,180,0,.35)}
 .msg.me .copy{color:#374151}
 .copy:hover{background:var(--code-bg);color:var(--text)}
 .copy.done{color:var(--ok);opacity:1}
+
+/* ---------- 上下文压缩 ---------- */
+.ctxchip{font-size:11.5px;color:var(--muted);text-align:center;margin-top:4px;min-height:18px}
+.ctxchip b{color:var(--accent);font-weight:600}
+.compnote{max-width:980px;margin:0 auto 12px;border:1px dashed #c7d6f7;background:var(--accent-soft);
+  color:var(--accent);border-radius:8px;padding:5px 10px;font-size:12px;line-height:1.5}
+.compnote.err{border-color:#f6c6c6;background:#fff5f5;color:var(--err)}
+.cmpgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.cmpgrid .frow{margin-bottom:6px}
 .codewrap{position:relative}
 .codewrap .copy{top:4px;right:4px}
 .tool pre{position:relative}
@@ -247,6 +256,7 @@ mark.hit.cur{background:#ffd23f;box-shadow:0 0 0 2px rgba(255,180,0,.35)}
     <div class="spacer"></div>
     <button class="ghost" id="openCfgBtn" style="display:none">配置目录</button>
     <button class="ghost" id="searchBtn" title="在当前对话内搜索（Ctrl+F）">🔍</button>
+    <button class="ghost" id="compressBtn" title="把较早的历史压缩成摘要，界面完整消息不丢">🗜 压缩上下文</button>
     <select id="providerSel" title="选择模型供应商"></select>
     <select id="modelSel" title="选择模型"></select>
     <button id="clearBtn" title="清空当前对话的上下文">清空上下文</button>
@@ -308,6 +318,7 @@ mark.hit.cur{background:#ffd23f;box-shadow:0 0 0 2px rgba(255,180,0,.35)}
           <button class="primary" id="sendBtn">发送</button>
           <button id="stopBtn" style="display:none">停止</button>
         </div>
+        <div class="ctxchip" id="ctxStatus" style="display:none"></div>
         <div class="hint" id="hintLine">SimpleWork · 本地优先 · 模型/MCP/Skill 均由本地配置驱动</div>
       </div>
     </section>
@@ -356,6 +367,34 @@ function fmtTime(ts){
 }
 
 function scrollBottom(){ const m=$('messages'); m.scrollTop = m.scrollHeight; }
+
+/* ---------- 上下文压缩状态 ---------- */
+function fmtChars(n){
+  n = Number(n)||0;
+  return n>=1000 ? (n/1000).toFixed(1)+'k 字' : n+' 字';
+}
+function updateCtxStatus(c){
+  const el=$('ctxStatus'); if(!el) return;
+  if(!c || !c.summary){ el.style.display='none'; el.textContent=''; return; }
+  el.style.display='';
+  el.innerHTML='模型上下文 <b>'+Number(c.history?c.history.length:0)+'</b> 条'+
+    (c.compressedCount?' · 已压缩 <b>'+Number(c.compressedCount)+'</b> 次':'')+
+    ' · 摘要 '+fmtChars(c.summary.length)+(c.compressedAt?' · '+fmtTime(c.compressedAt):'');
+}
+function updateCtxFromEvent(ev){
+  const el=$('ctxStatus'); if(!el) return;
+  if(!ev || !ev.summaryChars){ el.style.display='none'; return; }
+  el.style.display='';
+  el.innerHTML='模型上下文 <b>'+Number(ev.historyCount||0)+'</b> 条 · 已压缩 <b>'+
+    Number(ev.compressedCount||0)+'</b> 次 · 摘要 '+fmtChars(ev.summaryChars);
+}
+function setCompNote(text, isErr){
+  let n=document.getElementById('liveCompNote');
+  if(!n){ n=document.createElement('div'); n.id='liveCompNote'; n.className='compnote'; $('messages').appendChild(n); }
+  n.className='compnote'+(isErr?' err':'');
+  n.textContent=text;
+  scrollBottom();
+}
 
 /* ---------- 侧栏折叠 ---------- */
 function setCollapsed(v){
@@ -555,6 +594,7 @@ function renderStoredMsg(m){
 }
 
 function showEmpty(){
+  updateCtxStatus(null);
   $('messages').innerHTML = '<div class="empty"><h2>有什么可以帮你？</h2>'+
     '<div>对话会自动保存，切换左侧「💬 历史对话」可继续上次的上下文。</div>'+
     '<div>左侧图标栏可切换模型 / MCP / Skills / 设置，点「⇤」把面板收进最左侧。</div></div>';
@@ -581,7 +621,8 @@ function renderConvList(){
     const el = document.createElement('div');
     el.className = 'conv' + (c.id===currentConvId?' active':'');
     el.innerHTML = '<div class="t">'+esc(c.title||'新对话')+'</div>'+
-      '<div class="m">'+esc(fmtTime(c.updatedAt))+' · '+c.messageCount+' 条'+(c.model?' · '+esc(c.model):'')+'</div>';
+      '<div class="m">'+esc(fmtTime(c.updatedAt))+' · '+c.messageCount+' 条'+
+        (c.compressed?' · 🗜 已压缩':'')+(c.model?' · '+esc(c.model):'')+'</div>';
     const del = document.createElement('div');
     del.className='del'; del.textContent='×'; del.title='删除该对话';
     del.onclick = async(e)=>{
@@ -614,6 +655,7 @@ async function openConversation(id){
   try{ localStorage.setItem(LAST_KEY, id); }catch{}
   const c = j.conversation;
   $('messages').innerHTML = '';
+  updateCtxStatus(c);
   if(!c.messages.length){ showEmpty(); } else {
     c.messages.forEach(renderStoredMsg);
     renderKeyNotice();
@@ -1052,6 +1094,68 @@ function renderSettings(){
     pane.appendChild(el);
   });
 
+  // 上下文自动压缩
+  const ccHead = document.createElement('div');
+  ccHead.className='sect'; ccHead.textContent='上下文自动压缩';
+  pane.appendChild(ccHead);
+  const ccDesc = document.createElement('div');
+  ccDesc.style.cssText='font-size:12px;color:var(--muted);margin:-2px 0 8px;line-height:1.6';
+  ccDesc.innerHTML='达到阈值时，让当前模型把较早的历史总结成摘要注入系统提示；<b>界面里的完整消息不丢</b>，仍可搜索/复制/引用。摘要与会话一起保存，重启后可继续。';
+  pane.appendChild(ccDesc);
+
+  const ccBox = document.createElement('div'); ccBox.className='item';
+  const cc = (((state.config||{}).agent||{}).contextCompression) || {};
+  const cmpInputs = {};
+  const cmpRows = [
+    ['enabled','自动压缩','chk'],
+    ['triggerMessages','触发消息数','num'],
+    ['triggerChars','触发字符数','num'],
+    ['keepRecentMessages','保留最近消息','num'],
+    ['summaryMaxChars','摘要上限（字）','num'],
+    ['minOldMessages','最少压缩消息','num'],
+  ];
+  const cmpGrid = document.createElement('div'); cmpGrid.className='cmpgrid';
+  cmpRows.forEach(([key,label,type])=>{
+    const row=document.createElement('div'); row.className='frow';
+    const lab=document.createElement('label'); lab.textContent=label;
+    let inp;
+    if(type==='chk'){
+      lab.className='chk';
+      inp=document.createElement('input'); inp.type='checkbox'; inp.checked=cc.enabled!==false;
+      lab.prepend(inp);
+      row.appendChild(lab);
+    }else{
+      inp=document.createElement('input'); inp.type='number'; inp.min='1';
+      inp.value=String(cc[key]??({triggerMessages:48,triggerChars:32000,keepRecentMessages:16,summaryMaxChars:3000,minOldMessages:6})[key]);
+      row.append(lab,inp);
+    }
+    cmpInputs[key]=inp; cmpGrid.appendChild(row);
+  });
+  ccBox.appendChild(cmpGrid);
+  const cmpTip=document.createElement('div'); cmpTip.className='tip';
+  cmpTip.textContent='任一阈值达到即压缩；调小 triggerMessages / triggerChars 可更快触发，关闭后只做原有的长度兜底裁剪。';
+  ccBox.appendChild(cmpTip);
+  const cmpSave=document.createElement('button'); cmpSave.textContent='保存压缩设置'; cmpSave.style.marginTop='8px';
+  cmpSave.onclick=async()=>{
+    cmpSave.disabled=true; cmpSave.textContent='保存中…';
+    try{
+      const j=await (await fetch('/api/config/compression',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          enabled:cmpInputs.enabled.checked,
+          triggerMessages:Number(cmpInputs.triggerMessages.value),
+          triggerChars:Number(cmpInputs.triggerChars.value),
+          keepRecentMessages:Number(cmpInputs.keepRecentMessages.value),
+          summaryMaxChars:Number(cmpInputs.summaryMaxChars.value),
+          minOldMessages:Number(cmpInputs.minOldMessages.value),
+        })})).json();
+      cmpSave.textContent=j.ok?'已保存 ✓':'失败';
+      if(j.ok) await loadState();
+    }catch{ cmpSave.textContent='失败'; }
+    finally{ cmpSave.disabled=false; }
+  };
+  ccBox.appendChild(cmpSave);
+  pane.appendChild(ccBox);
+
   const foot = document.createElement('div');
   foot.style.cssText='display:flex;gap:6px;margin-top:6px;flex-wrap:wrap';
   const b0 = document.createElement('button'); b0.textContent='打开配置目录'; b0.onclick=()=>DESK.openPath('config');
@@ -1317,6 +1421,13 @@ async function send(){
           myBubble.querySelectorAll('.refcard').forEach(x=>x.remove());
           insertRefCards(myBubble, ev.refs||[]);
           myBubble.dataset.refs=JSON.stringify(ev.refs||[]);
+        } else if(ev.type==='compress'){
+          const i = ev.info || {};
+          if(i.status==='start') setCompNote('🗜 正在压缩早期上下文（'+Number(i.removed||0)+' 条）…', false);
+          else if(i.status==='done') setCompNote('🗜 上下文已压缩：'+i.before+' → '+i.after+' 条 · 摘要 '+fmtChars(i.summaryChars), false);
+          else if(i.status==='error') setCompNote('🗜 上下文压缩失败：'+(i.reason||'未知原因'), true);
+        } else if(ev.type==='done'){
+          updateCtxFromEvent(ev);
         } else if(ev.type==='text' || ev.type==='reasoning'){
           const tn = textDiv(bubble);
           buf += ev.delta; tn.innerHTML = md(buf); scrollBottom();
@@ -1367,6 +1478,23 @@ $('clearBtn').onclick = async ()=>{
   await loadConversations();
 };
 $('providerSel').onchange = fillModels;
+$('compressBtn').onclick = async ()=>{
+  if(!currentConvId || controller) return;
+  const btn=$('compressBtn'); const old=btn.textContent;
+  btn.textContent='压缩中…'; btn.disabled=true;
+  try{
+    const j = await (await fetch('/api/conversations/'+encodeURIComponent(currentConvId),{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'compress'})})).json();
+    if(j.ok){
+      const i=j.info||{};
+      setCompNote('🗜 已压缩：'+(i.before||0)+' → '+(i.after||0)+' 条 · 摘要 '+fmtChars(j.summaryChars), false);
+      updateCtxFromEvent(j);
+    }else{
+      setCompNote('🗜 '+(j.error||'没有可压缩的历史'), false);
+    }
+  }catch(e){ setCompNote('🗜 压缩失败：'+(e.message||e), true); }
+  finally{ btn.textContent=old; btn.disabled=false; await loadConversations(); }
+};
 /* 搜索：对话内 */
 $('searchBtn').onclick = ()=>{ $('searchBar').classList.contains('on') ? closeSearch() : openSearch(); };
 $('searchClose').onclick = closeSearch;

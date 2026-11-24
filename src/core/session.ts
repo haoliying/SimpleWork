@@ -7,6 +7,8 @@ import { Agent } from './agent.js';
 
 export interface SessionOptions {
   cwd?: string;
+  /** 复用外部配置实例（Web 服务用它保证热加载对所有 Agent 生效） */
+  store?: ConfigStore;
   providerId?: string;
   modelId?: string;
   connectMcp?: boolean;
@@ -38,7 +40,7 @@ export class Session {
 
   static async create(options: SessionOptions = {}): Promise<Session> {
     const cwd = options.cwd ?? process.cwd();
-    const store = new Store(cwd);
+    const store = options.store ?? new Store(cwd);
     const skills = new SkillRegistry(cwd);
     const mcp = new McpManager(store.app.tools.mcpToolNamePrefix || 'mcp__');
     const agent = new Agent({

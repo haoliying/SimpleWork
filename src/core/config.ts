@@ -86,6 +86,30 @@ export interface SkillsConfig {
   installed?: { name: string; source?: string; installedAt?: string }[];
 }
 
+export interface ContextCompressionConfig {
+  /** 是否自动压缩早期上下文 */
+  enabled: boolean;
+  /** 历史消息数达到该值时触发（含工具消息） */
+  triggerMessages: number;
+  /** 历史估算字符数达到该值时触发 */
+  triggerChars: number;
+  /** 至少保留的最近消息数（按安全边界取整） */
+  keepRecentMessages: number;
+  /** 摘要最大字符数 */
+  summaryMaxChars: number;
+  /** 可被压缩的早期消息少于该值时不动作，避免无意义的小摘要 */
+  minOldMessages: number;
+}
+
+export const DEFAULT_CONTEXT_COMPRESSION: ContextCompressionConfig = {
+  enabled: true,
+  triggerMessages: 48,
+  triggerChars: 32000,
+  keepRecentMessages: 16,
+  summaryMaxChars: 3000,
+  minOldMessages: 6,
+};
+
 export interface AppConfig {
   version: number;
   agent: {
@@ -95,6 +119,7 @@ export interface AppConfig {
     systemPromptAppend: string;
     confirmBeforeTool: boolean;
     autoApprove: string[];
+    contextCompression: ContextCompressionConfig;
   };
   tools: {
     mcpEnabled: boolean;
@@ -326,6 +351,14 @@ export class ConfigStore {
   get app(): AppConfig {
     if (!this._app) {
       this._app = this.layered<AppConfig>('config.json', (base, over) => deepMerge(base, over));
+      // 老版本配置没有这一节时，补齐默认值（也防止手写配置把它设为 null）
+      this._app.agent = {
+        ...this._app.agent,
+        contextCompression: {
+          ...DEFAULT_CONTEXT_COMPRESSION,
+          ...(this._app.agent?.contextCompression ?? {}),
+        },
+      };
     }
     return this._app;
   }

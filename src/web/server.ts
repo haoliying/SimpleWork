@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Session } from '../core/session.js';
-import { ConfigStore, normalizeProviderDef, suggestProviderId } from '../core/config.js';
+import { ConfigStore, DEFAULT_CONTEXT_COMPRESSION, normalizeProviderDef, suggestProviderId } from '../core/config.js';
 import type { ProviderDef } from '../core/config.js';
 import { createProviderFromDef } from '../core/llm/index.js';
 import { SkillRegistry } from '../core/skills/loader.js';
@@ -73,7 +73,7 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
   const log = opts.onStatus ?? ((line: string) => console.log(`  ${line}`));
 
   // 先建会话（不连 MCP），让界面能立刻打开；MCP 随后在后台连接
-  const session = await Session.create({ cwd, connectMcp: false });
+  const session = await Session.create({ cwd, store, connectMcp: false });
 
   /** 每个会话一个 Agent（各自持有上下文），共享 MCP / Skill / 配置 */
   const agents = new Map<string, Agent>();
@@ -217,6 +217,38 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
             if (a) a.clear();
             return json(res, { ok: true });
           }
+          if (body.action === 'compress') {
+            const c = convStore.get(id);
+            if (!c) return json(res, { error: '会话不存在' }, 404);
+            const a = agentFor(id);
+            a.restoreContext(c.summary, c.compressedCount, c.compressedAt);
+            a.history = c.history.slice();
+            let info: { status: string; before: number; after: number; removed: number; summaryChars: number; reason?: string } | undefined;
+            try {
+              const r = await a.compressNow({
+                onCompress: (i) => {
+                  info = i;
+                },
+              });
+              if (r.ok) {
+                c.history = a.history.slice();
+                c.summary = a.summary;
+                c.compressedCount = a.compressedCount;
+                c.compressedAt = a.compressedAt;
+                convStore.save(c);
+              }
+              return json(res, {
+                ok: r.ok,
+                error: r.error,
+                info,
+                summaryChars: a.summary.length,
+                compressedCount: a.compressedCount,
+                historyCount: a.history.length,
+              });
+            } catch (e) {
+              return json(res, { ok: false, error: (e as Error).message }, 400);
+            }
+          }
           convStore.rename(id, body.title ?? '');
           return json(res, { ok: true });
         }
@@ -243,7 +275,8 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
         currentConvId = conv.id;
 
         const agent = agentFor(conv.id);
-        // 恢复该会话的历史上下文
+        // 恢复该会话的历史上下文（含已压缩摘要，跨重启不丢）
+        agent.restoreContext(conv.summary, conv.compressedCount, conv.compressedAt);
         agent.history = conv.history.slice();
         if (provider) {
           agent.setModel(provider, model);
@@ -315,6 +348,7 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
               lastError = message2;
               send(res, { type: 'error', message: message2 });
             },
+            onCompress: (info) => send(res, { type: 'compress', info }),
           });
         } catch (e) {
           const msg = (e as Error).message ?? String(e);
@@ -328,6 +362,9 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
 
         // 落盘：上下文 + 展示消息
         conv.history = sanitizeHistory(agent.history.slice());
+        conv.summary = agent.summary;
+        conv.compressedCount = agent.compressedCount;
+        conv.compressedAt = agent.compressedAt || undefined;
         conv.messages.push({
           role: 'assistant',
           text: finalText,
@@ -339,7 +376,14 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
         });
         convStore.save(conv);
         if (!clientGone) {
-          send(res, { type: 'done', id: conv.id, title: conv.title });
+          send(res, {
+            type: 'done',
+            id: conv.id,
+            title: conv.title,
+            summaryChars: agent.summary.length,
+            compressedCount: agent.compressedCount,
+            historyCount: agent.history.length,
+          });
           res.end();
         }
         return;
@@ -477,6 +521,23 @@ export async function startWebServer(opts: WebServerOptions = {}): Promise<WebHa
         writeEnvVar(file, key, String(value ?? '').trim());
         store.reload();
         return json(res, { ok: true, file, hasKey: Boolean(process.env[key]) });
+      }
+
+      // 上下文自动压缩设置（写入 config.json，立即生效）
+      if (req.method === 'POST' && route === '/api/config/compression') {
+        const body = JSON.parse((await readBody(req)) || '{}') as Partial<typeof DEFAULT_CONTEXT_COMPRESSION>;
+        const raw = { ...(store.app.agent?.contextCompression ?? DEFAULT_CONTEXT_COMPRESSION), ...body };
+        const cfg = JSON.parse(JSON.stringify(store.app)) as typeof store.app;
+        cfg.agent.contextCompression = {
+          enabled: raw.enabled !== false,
+          triggerMessages: Math.max(8, Math.min(1000, Number(raw.triggerMessages) || DEFAULT_CONTEXT_COMPRESSION.triggerMessages)),
+          triggerChars: Math.max(2000, Math.min(5000000, Number(raw.triggerChars) || DEFAULT_CONTEXT_COMPRESSION.triggerChars)),
+          keepRecentMessages: Math.max(2, Math.min(200, Number(raw.keepRecentMessages) || DEFAULT_CONTEXT_COMPRESSION.keepRecentMessages)),
+          summaryMaxChars: Math.max(200, Math.min(20000, Number(raw.summaryMaxChars) || DEFAULT_CONTEXT_COMPRESSION.summaryMaxChars)),
+          minOldMessages: Math.max(2, Math.min(100, Number(raw.minOldMessages) || DEFAULT_CONTEXT_COMPRESSION.minOldMessages)),
+        };
+        store.saveApp(cfg);
+        return json(res, { ok: true, config: cfg.agent.contextCompression });
       }
 
       if (req.method === 'POST' && route === '/api/mcp/toggle') {

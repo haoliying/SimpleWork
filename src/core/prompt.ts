@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import type { ConfigStore } from './config.js';
 import type { SkillRegistry } from './skills/loader.js';
 import type { ToolSchema } from './llm/types.js';
+import { formatSummarySection } from './context.js';
 
 export interface PromptContext {
   cwd: string;
@@ -13,6 +14,8 @@ export interface PromptContext {
   builtinToolNames: string[];
   model: string;
   providerName: string;
+  /** 已压缩的早期对话摘要（由上下文压缩器生成） */
+  summary?: string;
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string {
@@ -46,6 +49,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `5. 任务复杂时先用 todo_write 列出步骤，再逐步执行。`,
     `6. 全部完成后，用简短的中文总结你做了什么、产出了哪些文件。`,
     ``,
+    ...(ctx.summary?.trim() ? [formatSummarySection(ctx.summary), ``] : []),
     `## 内置工具`,
     ctx.builtinToolNames.map((n) => `- ${n}`).join('\n'),
     ``,

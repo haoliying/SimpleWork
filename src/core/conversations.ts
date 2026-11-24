@@ -49,8 +49,13 @@ export interface Conversation {
   updatedAt: number;
   provider?: string;
   model?: string;
-  /** 送给大模型的原始上下文（含 tool 消息） */
+  /** 送给大模型的原始上下文（含 tool 消息；压缩后只保留最近一段） */
   history: ChatMessage[];
+  /** 早期历史压缩后的摘要（注入系统提示，界面完整消息不受影响） */
+  summary?: string;
+  /** 自动/手动压缩累计次数 */
+  compressedCount?: number;
+  compressedAt?: number;
   /** 界面展示消息 */
   messages: ConvMessage[];
 }
@@ -63,6 +68,8 @@ export interface ConvSummary {
   messageCount: number;
   provider?: string;
   model?: string;
+  /** 该会话是否已有压缩摘要 */
+  compressed?: boolean;
 }
 
 function newId(): string {
@@ -156,6 +163,7 @@ export class ConversationStore {
         messageCount: c.messages.length,
         provider: c.provider,
         model: c.model,
+        compressed: Boolean(c.summary?.trim()),
       });
     }
     return out.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -184,6 +192,9 @@ export class ConversationStore {
     if (!c) return false;
     c.history = [];
     c.messages = [];
+    c.summary = undefined;
+    c.compressedCount = 0;
+    c.compressedAt = 0;
     this.save(c);
     return true;
   }

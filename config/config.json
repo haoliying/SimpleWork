@@ -7,7 +7,15 @@
     "maxTokens": 8192,
     "systemPromptAppend": "",
     "confirmBeforeTool": false,
-    "autoApprove": ["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search", "todo_write", "use_skill"]
+    "autoApprove": ["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search", "todo_write", "use_skill"],
+    "contextCompression": {
+      "enabled": true,
+      "triggerMessages": 48,
+      "triggerChars": 32000,
+      "keepRecentMessages": 16,
+      "summaryMaxChars": 3000,
+      "minOldMessages": 6
+    }
   },
   "tools": {
     "mcpEnabled": true,
